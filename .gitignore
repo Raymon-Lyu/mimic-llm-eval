@@ -1,0 +1,15 @@
+/data/
+/outputs/
+.env
+.env.*
+*.csv.gz
+__pycache__/
+.vscode/
+
+# PhysioNet Demo archive extracted into the repository root
+/hosp/
+/icu/
+/demo_subject_id.csv
+/README.txt
+/LICENSE.txt
+/SHA256SUMS.txt
