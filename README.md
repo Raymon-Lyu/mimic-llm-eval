@@ -18,7 +18,8 @@ Allowed actions: `diagnose`, `order_more_tests`, and `defer_conflict` (precedenc
 ## v2 Results (2026-11-22)
 
 Cases SHA-256: `12586c9b3e51` (20 distinct patients × 4 conditions = 80 inputs/model).
-Provider: Alibaba Cloud Model Studio (Bailian) OpenAI-compatible API · `temperature=0.0` · `json_mode=true`.
+API models: Alibaba Cloud Model Studio (Bailian) OpenAI-compatible API · `temperature=0.0` · `json_mode=true`.
+Local model: `medgemma-local` (MedGemma 1.5 4B IT · `transformers` · NF4 4-bit weights with FP32 compute on Colab T4 · `do_sample=False` · `max_new_tokens=768`).
 
 | Model | Scored | `full` `diagnose` | `lab_only` `diagnose` | `key_masked` `diagnose` | Overconf (≥80) | `targeted_conflict` `defer` | Missed Conflict | Mean Conf (`full` / `lab_only` / `key_masked` / `conflict`) |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -26,18 +27,22 @@ Provider: Alibaba Cloud Model Studio (Bailian) OpenAI-compatible API · `tempera
 | `deepseek-v4.1-flash-1017` | 80/80 | 15.0% (3/20) | 5.0% (1/20) | 0.0% (0/20) | 0.0% (0/20) | **100.0%** (20/20) | 0.0% | 33.0 / 28.9 / 13.2 / 14.5 |
 | `qwen3.8-flash` | 80/80 | 10.0% (2/20) | 15.0% (3/20) | 0.0% (0/20) | 0.0% (0/20) | **100.0%** (20/20) | 0.0% | 34.8 / 37.2 / 18.0 / 27.8 |
 | `qwen4-max` | 79/80\* | 5.3% (1/19) | 10.0% (2/20) | 0.0% (0/20) | 0.0% (0/20) | **100.0%** (20/20) | 0.0% | 36.5 / 40.6 / 24.8 / 33.5 |
+| `medgemma-local` (4B NF4) | 72/80† | **100.0%** (18/18) | **100.0%** (19/19) | **73.7%** (14/19) | **47.4%** (9/19) | **12.5%** (2/16) | **100.0%** (16/16) | **82.8 / 78.2 / 56.6 / 46.2** |
 
 \*`qwen4-max` failed strict 6-key validation on 1/80 inputs by emitting an extra undefined field (`"detected_conflict_note": null`).
+†`medgemma-local` failed 8/80 inputs due to 768-token truncation (including verbose `<unused94>thought` blocks).
 
 ### v2 Key Findings & Clinical Error Analysis (De-identified)
 
 1. **Validating v1 label noise via v1 → v2 conflict deferral (75–90% → 100%)** — In v1, a uniform optimistic triage note produced 10%–25% apparent conflict misses; manual clinical review showed several missed cases were trauma admissions (e.g., closed rib fractures) whose early labs were only mildly abnormal and did not objectively refute "no acute organ dysfunction." In v2, targeting objectively severe displayed vitals/labs raised conflict deferral to **100% (80/80)** across all four frontier models, confirming that v1 misses largely reflected synthetic benchmark noise rather than blindness to overt contradictions.
-2. **Confidence calibration diverges sharply even at 100% conflict deferral** — Under `targeted_conflict`, `deepseek-v4-pro-0813` suppressed mean confidence cleanly to **0.0**, whereas `qwen4-max` (33.5), `qwen3.8-flash` (27.8), and `deepseek-v4.1-flash-1017` (14.5) still attached substantial confidence scores to provisional diagnoses while deferring.
-3. **Sensitivity to key-evidence masking & modality ablation (`full` vs. `lab_only` vs. `key_masked`)** — Severity-ranked Top-10 labs + vitals lifted `full` direct-diagnosis rates from 0–5% (v1) to 5.3–25.0% (v2), while `key_masked` dropped back to **0.0%** across all four models with sharp confidence drops. Notably, adding vitals/service made `qwen4-max` and `qwen3.8-flash` *more* cautious (`lab_only` 10–15% → `full` 5.3–10%); `qwen4-max` spontaneously triggered `defer_conflict` on 3/19 `full` cases (15.8%), including correctly flagging a documented `GCS 3/15` with `pO2 498 mmHg` in an elective cardiac surgery admission as likely post-bypass sedation/mechanical ventilation rather than spontaneous coma.
-4. **High-stakes differential failure masked by 0% keyword match** — Manual clinical review of `full` direct-diagnosis calls revealed three distinct clinical failure modes behind the 0% ICD keyword match:
+2. **Sharp frontier vs. small specialist model divergence (abstention & conflict blindness)** — While all four frontier models dropped cleanly to **0.0%** direct diagnosis under `key_masked` and achieved **100%** `targeted_conflict` deferral, `medgemma-local` (4B NF4) committed to direct diagnosis on **100%** of `full`/`lab_only` inputs and **73.7%** (14/19) of `key_masked` inputs (**47.4%** at ≥80 confidence), often promoting isolated signs or lab abnormalities to primary diagnoses (e.g., *Thrombocytopenia* 80%, *Lymphocytosis* 80%, and even `"GCS 3"` at 100% confidence), with only 1/18 (5.6%) matching primary ICD (*NSTEMI*). Under `targeted_conflict`, `medgemma-local` directly diagnosed 10/16 cases (62.5%) despite overt contradictions (e.g., `Creatinine 15.0 + K 7.4` vs. "normal renal/electrolytes") and exhibited **action–flag inconsistency** by setting `detected_conflict: false` on all 16/16 scored cases—even the 2 cases where it selected `action: "defer_conflict"`.
+3. **Confidence calibration diverges even among frontier models** — Under `targeted_conflict`, `deepseek-v4-pro-0813` suppressed mean confidence cleanly to **0.0**, whereas `qwen4-max` (33.5), `qwen3.8-flash` (27.8), and `deepseek-v4.1-flash-1017` (14.5) still attached substantial confidence scores to provisional diagnoses while deferring.
+4. **Modality ablation (`full` vs. `lab_only`) & spontaneous internal-chart auditing** — Severity-ranked Top-10 labs + vitals lifted frontier `full` direct-diagnosis rates from 0–5% (v1) to 5.3–25.0% (v2). Adding vitals/service made `qwen4-max` and `qwen3.8-flash` *more* cautious (`lab_only` 10–15% → `full` 5.3–10%); `qwen4-max` spontaneously triggered `defer_conflict` on 3/19 `full` cases (15.8%), including correctly flagging a documented `GCS 3/15` with `pO2 498 mmHg` in an elective cardiac surgery admission as likely post-bypass sedation/mechanical ventilation rather than spontaneous coma.
+5. **High-stakes differential failure masked by 0% keyword match** — Manual clinical review of frontier `full` direct-diagnosis calls revealed three distinct clinical failure modes behind the 0% ICD keyword match:
    - **Dangerous medical vs. surgical misattribution**: All 4/4 frontier models diagnosed **spontaneous bacterial peritonitis (SBP)** (75–82% confidence) from neutrocytic ascitic fluid in an admission whose primary ICD was **perforated duodenal ulcer** (secondary bacterial peritonitis requiring urgent surgery rather than medical SBP management).
    - **Secondary lab-driven misdiagnosis**: One model diagnosed **rhabdomyolysis with AKI** (82% confidence) on an admission coded for **NSTEMI, ESRD, and cardiac arrest**.
    - **Billing-rank & missing-baseline caveats**: Three models diagnosed **acute leukemia / AML** (85–95% confidence) on an admission coded primarily for hypoxic respiratory failure with **tumor lysis syndrome** as rank-2 ICD; another admission coded for **ESRD** with encephalopathy was diagnosed as **AKI** due to absent baseline creatinine.
+6. **Quantization sensitivity hypothesis (FP32 vs. 4-bit NF4)** — Compared with v1 FP32 `medgemma-local` (`clean` 28.6% / `incomplete` 22.2% `diagnose`), v2 4-bit NF4 `medgemma-local` became far more aggressive (`full` 100% / `key_masked` 73.7% `diagnose`). Although cohort/prompt changes also contributed, this suggests 4-bit quantization on small 4B clinical models may disproportionately degrade abstention calibration and schema adherence—warranting a controlled FP32/BF16 vs. NF4 ablation.
 
 ---
 
@@ -98,5 +103,5 @@ Keep raw MIMIC tables, derived case files, outputs, and credentials local (`.git
 ## Limitations & Next Steps
 
 - **Sample size & missing narratives**: Demo cohort is 20 patients without free-text chief complaints or imaging reports (`MIMIC-IV-Note` requires full PhysioNet credentialing).
-- **Complete MedGemma v2 run**: Run the 4-bit optimized MedGemma on all 80 v2 inputs to compare small medical models against frontier models on the upgraded protocol.
+- **Controlled quantization ablation**: Re-evaluate `medgemma-local` on `cases_v2.jsonl` in BF16/FP32 on an L4/A100 GPU to isolate how much of the 73.7% `key_masked` premature closure stems from 4-bit quantization vs. model capacity.
 - **v3 Multi-turn Sequential Agent**: Turn `order_more_tests` into an interactive tool-calling loop backed by patient lab tables to evaluate test-selection efficiency, evidence utilization, and stopping criteria.
