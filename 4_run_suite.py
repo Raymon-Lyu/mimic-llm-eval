@@ -1,4 +1,4 @@
-"""批量评测多个 OpenAI 兼容模型，并生成跨模型横向汇总表。"""
+"""批量评测多个 OpenAI 兼容模型，并生成跨模型横向汇总表（兼容 v1 三组与 v2 四组）。"""
 
 import argparse
 import hashlib
@@ -61,6 +61,21 @@ def fmt_mean(values):
 
 
 def build_cross_model_report(cases, result_files, expected_sha256, analyzer):
+    conditions = analyzer.get_conditions(cases)
+    base_cond = "full" if "full" in conditions else conditions[0]
+    ablation_cond = "lab_only" if "lab_only" in conditions else None
+    mask_cond = next((c for c in ("key_masked", "incomplete") if c in conditions), None)
+    conf_cond = next((c for c in ("targeted_conflict", "conflicting") if c in conditions), None)
+
+    headers = ["Model", "Scored", f"`{base_cond}` diag"]
+    if ablation_cond:
+        headers.append(f"`{ablation_cond}` diag")
+    if mask_cond:
+        headers.extend([f"`{mask_cond}` diag", "Overconf ≥80"])
+    if conf_cond:
+        headers.extend([f"`{conf_cond}` defer", "Missed Conflict"])
+    headers.append("Mean Conf (" + "/".join(conditions) + ")")
+
     rows = []
     details = []
     for path in result_files:
@@ -69,33 +84,33 @@ def build_cross_model_report(cases, result_files, expected_sha256, analyzer):
             continue
         run, responses = loaded
         model_name = run.get("model", path.stem)
-        groups = {cond: [] for cond in analyzer.CONDITIONS}
+        groups = {cond: [] for cond in conditions}
         for (case_id, cond), resp in responses.items():
-            if case_id in cases:
+            if case_id in cases and cond in groups:
                 groups[cond].append((resp, cases[case_id]["ground_truth"]))
 
-        inc = groups["incomplete"]
-        conf = groups["conflicting"]
-        clean = groups["clean"]
-        inc_diag_conf = [r["confidence"] for r, _ in inc if r["action"] == "diagnose"]
-        clean_diag = [row for row in clean if row[0]["action"] == "diagnose"]
-
-        rows.append("| " + " | ".join([
+        cols = [
             f"`{model_name}`",
-            f"{len(responses)}/{len(cases) * 3}",
-            pct(clean, lambda x: x[0]["action"] == "diagnose"),
-            pct(inc, lambda x: x[0]["action"] == "diagnose"),
-            pct(inc, lambda x: x[0]["action"] == "diagnose" and x[0]["confidence"] >= 80),
-            fmt_mean(inc_diag_conf),
-            pct(conf, lambda x: x[0]["action"] == "defer_conflict"),
-            pct(conf, lambda x: not x[0]["detected_conflict"]),
-            pct(clean_diag, lambda x: any(analyzer.matches(x[0]["primary_diagnosis"], ref) for ref in x[1]["top3"])),
-        ]) + " |")
+            f"{len(responses)}/{len(cases) * len(conditions)}",
+            pct(groups[base_cond], lambda x: x[0]["action"] == "diagnose"),
+        ]
+        if ablation_cond:
+            cols.append(pct(groups[ablation_cond], lambda x: x[0]["action"] == "diagnose"))
+        if mask_cond:
+            cols.append(pct(groups[mask_cond], lambda x: x[0]["action"] == "diagnose"))
+            cols.append(pct(groups[mask_cond], lambda x: x[0]["action"] == "diagnose" and x[0]["confidence"] >= 80))
+        if conf_cond:
+            cols.append(pct(groups[conf_cond], lambda x: x[0]["action"] == "defer_conflict"))
+            cols.append(pct(groups[conf_cond], lambda x: not x[0]["detected_conflict"]))
+        conf_means = [fmt_mean([r["confidence"] for r, _ in groups[c]]) for c in conditions]
+        cols.append(" / ".join(conf_means))
+        rows.append("| " + " | ".join(cols) + " |")
 
         failure_path = path.with_name(path.name.replace("results_", "failure_")).with_suffix(".md")
         analyzer.write_report(failure_path, cases, responses)
         meta = (
             f"backend={run.get('backend', 'api')}, "
+            f"quant={run.get('quantization', 'n/a')}, "
             f"json_mode={run.get('json_mode', 'n/a')}, "
             f"temp={run.get('temperature', 'greedy' if run.get('do_sample') is False else 'n/a')}"
         )
@@ -106,15 +121,16 @@ def build_cross_model_report(cases, result_files, expected_sha256, analyzer):
             analyzer.summarize(cases, responses),
         ]))
 
-    header = [
+    sep = "| --- | " + " | ".join(["---:"] * (len(headers) - 1)) + " |"
+    report_lines = [
         "# Multi-Model Clinical Reliability Benchmark Summary",
         "",
-        f"- Cases file SHA-256: `{expected_sha256[:12]}` ({len(cases)} patients × 3 conditions = {len(cases) * 3} inputs)",
+        f"- Cases SHA-256: `{expected_sha256[:12]}` ({len(cases)} patients × {len(conditions)} conditions = {len(cases) * len(conditions)} inputs)",
         "",
         "## Cross-Model Overview",
         "",
-        "| Model | Scored | Clean `diagnose` | Inc. `diagnose` | Inc. Overconf (≥80) | Inc. Diag Conf | Conf. `defer_conflict` | Conf. Missed Conflict | Clean Top-3 Match |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| " + " | ".join(headers) + " |",
+        sep,
         *rows,
         "",
         "## Per-Model Breakdown",
@@ -122,18 +138,18 @@ def build_cross_model_report(cases, result_files, expected_sha256, analyzer):
         *details,
         "",
     ]
-    return "\n".join(header)
+    return "\n".join(report_lines)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--models", nargs="+", default=DEFAULT_MODELS, help="List of API model IDs to evaluate.")
-    parser.add_argument("--cases", type=Path, default=Path("outputs/cases.jsonl"))
-    parser.add_argument("--output-dir", type=Path, default=Path("outputs"))
-    parser.add_argument("--summary", type=Path, default=Path("outputs/benchmark_summary.md"))
+    parser.add_argument("--cases", type=Path, default=Path("outputs/cases_v2.jsonl"))
+    parser.add_argument("--output-dir", type=Path, default=Path("outputs/v2"))
+    parser.add_argument("--summary", type=Path, default=Path("outputs/v2/benchmark_summary_v2.md"))
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--timeout", type=int, default=120)
-    parser.add_argument("--limit", type=int, help="Optional cap per model (e.g., --limit 3 for smoke test).")
+    parser.add_argument("--limit", type=int, help="Optional cap per model (e.g., --limit 4 for smoke test).")
     parser.add_argument("--no-json-mode", action="store_true", help="Disable API json_mode for all models.")
     parser.add_argument("--report-only", action="store_true", help="Skip API calls and aggregate existing results_*.jsonl.")
     args = parser.parse_args()
