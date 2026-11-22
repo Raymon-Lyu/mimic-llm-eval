@@ -80,25 +80,24 @@ $env:OPENAI_API_KEY = '<your-api-key>'
 python 4_run_suite.py --limit 4   # smoke test (first patient, 4 conditions)
 python 4_run_suite.py             # full 80-input run (resumes automatically)
 
-# Optional: aggregate existing results_*.jsonl without making API calls & regenerate figure
+# Optional: aggregate existing results_*.jsonl without making API calls
 python 4_run_suite.py --report-only
-python 5_plot_results.py
 ```
 
 ### Local MedGemma on Colab / Kaggle (4-bit Optimized)
 
-`2_run_eval.py` supports `--load-in-4bit` (NF4 quantization with FP32/BF16 compute) to keep MedGemma 4B in ~2.5 GB VRAM on Colab/Kaggle T4 GPUs without CPU offloading, with `--max-new-tokens 768` by default to prevent mid-JSON truncation:
+`2_run_eval.py` supports `--load-in-4bit` (NF4 quantization with FP32/BF16 compute) to keep MedGemma 4B in ~3–4 GB VRAM on Colab/Kaggle T4 GPUs without CPU offloading, with `--max-new-tokens 768` by default to prevent mid-JSON truncation:
 
 ```python
 !pip install -q -U bitsandbytes accelerate
 !python 2_run_eval.py \
-    --local-model /content/medgemma-local \
+    --local-model <path-to-medgemma-weights> \
     --load-in-4bit \
-    --cases outputs/cases_v2.jsonl \
-    --output outputs/v2/results_medgemma_v2.jsonl
+    --cases <path-to-cases_v2.jsonl> \
+    --output <path-to-results.jsonl>
 !python 3_analyze_results.py \
-    --cases outputs/cases_v2.jsonl \
-    --results outputs/v2/results_medgemma_v2.jsonl
+    --cases <path-to-cases_v2.jsonl> \
+    --results <path-to-results.jsonl>
 ```
 
 Keep raw MIMIC tables, derived case files, outputs, and credentials local (`.gitignore` excludes `/hosp/`, `/icu/`, `/data/`, `/outputs/`, and `.env`).

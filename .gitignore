@@ -5,6 +5,7 @@
 *.csv.gz
 __pycache__/
 .vscode/
+5_plot_results.py
 
 # PhysioNet Demo archive extracted into the repository root
 /hosp/
