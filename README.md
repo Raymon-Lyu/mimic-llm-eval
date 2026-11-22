@@ -17,6 +17,8 @@ Allowed actions: `diagnose`, `order_more_tests`, and `defer_conflict` (precedenc
 
 ## v2 Results (2026-11-22)
 
+![MIMIC-IV v2 Clinical LLM Reliability Overview](assets/v2_benchmark_overview.png)
+
 Cases SHA-256: `12586c9b3e51` (20 distinct patients × 4 conditions = 80 inputs/model).
 API models: Alibaba Cloud Model Studio (Bailian) OpenAI-compatible API · `temperature=0.0` · `json_mode=true`.
 Local model: `medgemma-local` (MedGemma 1.5 4B IT · `transformers` · NF4 4-bit weights with FP32 compute on Colab T4 · `do_sample=False` · `max_new_tokens=768`).
@@ -78,8 +80,9 @@ $env:OPENAI_API_KEY = '<your-api-key>'
 python 4_run_suite.py --limit 4   # smoke test (first patient, 4 conditions)
 python 4_run_suite.py             # full 80-input run (resumes automatically)
 
-# Optional: aggregate existing results_*.jsonl without making API calls
+# Optional: aggregate existing results_*.jsonl without making API calls & regenerate figure
 python 4_run_suite.py --report-only
+python 5_plot_results.py
 ```
 
 ### Local MedGemma on Colab / Kaggle (4-bit Optimized)
